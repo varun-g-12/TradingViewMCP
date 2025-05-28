@@ -1,9 +1,6 @@
 {
 	"name": "TradingView MCP Development Container",
-	"build": {
-		"context": "..",
-		"dockerfile": "../Dockerfile"
-	},
+	"image": "python:3.12-slim-bookworm",
 	"features": {
 		"ghcr.io/devcontainers/features/git:1": {}
 	},
