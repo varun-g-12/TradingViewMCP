@@ -1,25 +1,52 @@
-FROM python:3.12-slim-bookworm
+# ---- Builder Stage ----
+# This stage installs Poetry and project dependencies.
+FROM python:3.12-slim-bookworm AS builder
 
-# Build argument for development dependencies
-ARG INSTALL_DEV=false
+# Set environment variables for Python and Poetry
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    POETRY_VERSION=2.1.3 \
+    POETRY_HOME="/opt/poetry" \
+    POETRY_VIRTUALENVS_IN_PROJECT=true
 
-# Set working directory
+# Add Poetry to the PATH
+ENV PATH="$POETRY_HOME/bin:$PATH"
+
+# Install Poetry using pip for better Docker integration
+RUN pip install "poetry==$POETRY_VERSION"
+
+# Set the working directory
 WORKDIR /app
 
-# Install system dependencies needed for building Python packages
-RUN apt-get update && apt-get install -y \
-    gcc \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# Copy only the dependency definition files first
+# This allows Docker to cache the dependency installation layer
+COPY pyproject.toml poetry.lock* README.md ./
 
-# Copy poetry files
-COPY pyproject.toml poetry.lock ./
-
-# Install dependencies
-RUN poetry install --only main
-
-# Copy source code
+# Copy the source code
 COPY src/ ./src/
+# Install project dependencies into a local .venv folder
+# --no-dev: Installs only production dependencies.
+# --no-interaction: Prevents interactive prompts.
+# --no-ansi: Disables ANSI output for cleaner logs.
+RUN poetry install --only main --no-interaction --no-ansi
 
-# Run the MCP server
+# ---- Final Stage ----
+# This stage creates the final, lean production image.
+FROM python:3.12-slim-bookworm AS final
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH="/app/.venv/bin:$PATH"
+
+# Set the working directory
+WORKDIR /app
+
+# Copy the virtual environment (with dependencies) from the builder stage
+COPY --from=builder /app/.venv ./.venv
+
+# Copy the source code from the builder stage
+COPY --from=builder /app/src ./src/
+
+# Set the command to run the application
 CMD ["python", "-m", "src.mcp_server.main"]
