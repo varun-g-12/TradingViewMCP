@@ -1,10 +1,11 @@
 import json
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, Literal
 
 import pandas as pd
 import requests
 from mcp.server.fastmcp import FastMCP
-from mcp_server.constants import HEADERS, PARAMS, COLUMNS, SYMBOLS, MARKETS, DATA
+
+from mcp_server.constants import COLUMNS, DATA, HEADERS, PARAMS
 
 # Create an MCP server
 mcp = FastMCP("Tradingview_mcp")
