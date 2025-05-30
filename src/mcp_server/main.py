@@ -1,212 +1,222 @@
-import json
-import logging
-from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Literal, Union
-
-import pandas as pd
+import logging
 import requests
+import pandas as pd
+import datetime
+import json
+from pathlib import Path
 from mcp.server.fastmcp import FastMCP
-
-from mcp_server.constants import COLUMNS, DATA, HEADERS, PARAMS
+from mcp_server.constants import (
+    PARAMS,
+    HEADERS,
+    DATA,
+    API_URL,
+    COLUMNS,
+    RECOMMENDATION_THRESHOLDS,
+    TEMP_DIR,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Create an MCP server
 mcp = FastMCP("Tradingview_mcp")
-
-# Constants
-TEMP_DIR = Path("tempDir")
-API_URL = "https://scanner.tradingview.com/india/scan"
-RECOMMENDATION_THRESHOLDS = {
-    "strong_sell": (-1.0, -0.5),
-    "sell": (-0.5, -0.1),
-    "neutral": (-0.1, 0.1),
-    "buy": (0.1, 0.5),
-    "strong_buy": (0.5, 1.0),
-}
+TEMP_FILE = TEMP_DIR / f"{datetime.datetime.now().date().strftime('%Y-%m-%d')}.csv"
 
 
-class TradingDataError(Exception):
-    """Custom exception for trading data operations."""
+class TradingViewError(Exception):
+    """
+    Custom exception class for TradingView-related errors.
+
+    This exception is raised when there are issues with TradingView operations,
+    such as API failures, authentication problems, or data retrieval errors.
+    """
 
     pass
 
 
-def setup_temp_directory() -> None:
-    """Create temporary directory if it doesn't exist."""
-    TEMP_DIR.mkdir(exist_ok=True)
-
-
-def categorize_recommendation(value: float) -> str:
+def categorize_recommendation(value: Union[float, int, Any]) -> str:
     """
-    Categorize recommendation based on Recommend.All value.
+    Categorize a numerical recommendation value into a predefined category.
+
     Args:
-        value: The recommendation value to categorize
+        value: The numerical value to categorize.
+
     Returns:
-        The category string
+        The category name corresponding to the value's range, or "unknown"
+        if the value cannot be categorized.
     """
-    if not isinstance(value, (int, float)) or pd.isna(value):  # type: ignore
+    if not isinstance(value, (int, float)) or pd.isna(value):
         return "unknown"
 
-    for category, (min_val, max_val) in RECOMMENDATION_THRESHOLDS.items():
-        if min_val <= value <= max_val:
+    for category, (min_value, max_value) in RECOMMENDATION_THRESHOLDS.items():
+        if min_value <= value <= max_value:
             return category
 
     return "unknown"
 
 
-def fetch_trading_data(output_file: str) -> Path:
+def _make_api_request() -> Dict[str, Any]:
     """
-    Fetch trading data from TradingView API and save to CSV.
-    Args:
-        output_file: Base name for the output file
+    Make API request to TradingView and return the response data.
+
     Returns:
-        Path to the saved CSV file
+        The API response data
+
     Raises:
-        TradingDataError: If API request fails or data processing fails
+        TradingViewError: If the API request fails
     """
     try:
-        logger.info("Fetching trading data from TradingView API")
-
+        logger.info("Fetching data from TradingView API")
         response = requests.post(
-            API_URL, params=PARAMS, headers=HEADERS, data=json.dumps(DATA), timeout=30
+            API_URL,
+            params=PARAMS,
+            data=json.dumps(DATA),
+            headers=HEADERS,
+            timeout=30,
         )
         response.raise_for_status()
+        return response.json()
 
-        data = response.json()
-        if not data or "data" not in data:
-            raise TradingDataError("Invalid response format from API")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"API request failed: {e}")
+        raise TradingViewError(f"API request failed: {e}")
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON response: {e}")
+        raise TradingViewError(f"Invalid JSON response: {e}")
 
-        api_data = data["data"]
-        if not api_data:
-            raise TradingDataError("No data returned from API")
 
-        # Extract rows and create DataFrame
-        rows = [row["d"] for row in api_data if "d" in row]
-        if not rows:
-            raise TradingDataError("No valid data rows found")
+def _extract_data_rows(api_response: Dict[str, Any]) -> List[List[Any]]:
+    """
+    Extract data rows from API response.
 
-        df = pd.DataFrame(rows, columns=COLUMNS)
+    Args:
+        api_response: The API response dictionary
 
-        # Add recommendation category
-        df["recommendation_category"] = df["Recommend.All"].apply(  # type: ignore
-            categorize_recommendation
-        )
+    Returns:
+        List of data rows
+
+    Raises:
+        TradingViewError: If data extraction fails
+    """
+    api_data = api_response.get("data")
+    if not api_data:
+        raise TradingViewError("Unable to find the 'data' key in API response")
+
+    api_rows = [row.get("d") for row in api_data if row.get("d") is not None]
+    if not api_rows:
+        raise TradingViewError("Unable to find row data in API response")
+
+    return api_rows
+
+
+def _process_dataframe(api_rows: List[List[Any]]) -> pd.DataFrame:
+    """
+    Process raw API data into a pandas DataFrame.
+
+    Args:
+        api_rows: Raw data rows from API
+
+    Returns:
+        Processed DataFrame with recommendation categories
+    """
+    df = pd.DataFrame(api_rows, columns=COLUMNS)
+
+    # Add recommendation category column
+    df["recommendation_category"] = df["Recommend.All"].apply(categorize_recommendation)  # type: ignore
+
+    return df
+
+
+def _save_to_csv(df: pd.DataFrame, file_path: Path) -> None:
+    """
+    Save DataFrame to CSV file.
+
+    Args:
+        df: DataFrame to save
+        file_path: Path to save the file
+    """
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(file_path, index=False)
+    logger.info(f"Data saved to {file_path}")
+
+
+def fetch_trading_view_data() -> None:
+    """
+    Fetch trading data from TradingView API and save it to a CSV file.
+
+    Raises:
+        TradingViewError: If any step in the process fails
+    """
+    try:
+        # Make API request
+        api_response = _make_api_request()
+
+        # Extract data rows
+        api_rows = _extract_data_rows(api_response)
+
+        # Process into DataFrame
+        df = _process_dataframe(api_rows)
 
         # Save to CSV
-        setup_temp_directory()
-        output_path = TEMP_DIR / f"{output_file}.csv"
-        df.to_csv(output_path, index=False)
+        _save_to_csv(df, TEMP_FILE)
 
-        logger.info(f"Trading data saved to {output_path}")
-        return output_path
-
-    except requests.RequestException as e:
-        raise TradingDataError(f"API request failed: {e}")
-    except (KeyError, ValueError, pd.errors.ParserError) as e:
-        raise TradingDataError(f"Data processing failed: {e}")
+    except TradingViewError:
+        raise
     except Exception as e:
-        raise TradingDataError(f"Unexpected error: {e}")
+        logger.error(f"Unexpected error during data fetch: {e}")
+        raise TradingViewError(f"Unexpected error during data fetch: {e}")
 
 
-def load_and_filter_stocks(csv_path: Path, tech_sig: str) -> List[Dict[str, Any]]:
+def _load_data() -> pd.DataFrame:
     """
-    Load CSV data and filter by technical signal.
-    Args:
-        csv_path: Path to the CSV file
-        tech_sig: Technical signal to filter by
+    Load data from CSV file, fetching if necessary.
+
     Returns:
-        List of filtered stock records
+        DataFrame with trading data
+
     Raises:
-        TradingDataError: If file loading or filtering fails
+        TradingViewError: If data loading fails
     """
+    if not TEMP_FILE.exists():
+        logger.info("Temporary file not found, fetching fresh data")
+        fetch_trading_view_data()
+
     try:
-        if not csv_path.exists():
-            raise TradingDataError(f"Data file not found: {csv_path}")
-
-        df = pd.read_csv(csv_path)  # type: ignore
-
-        if "recommendation_category" not in df.columns:
-            raise TradingDataError("Missing recommendation_category column")
-
-        filtered_df = df[df["recommendation_category"] == tech_sig]
-        logger.info(f"Found {len(filtered_df)} stocks with {tech_sig} signal")
-
-        return filtered_df.to_dict(orient="records")  # type: ignore
-
-    except pd.errors.EmptyDataError:
-        raise TradingDataError("CSV file is empty")
-    except pd.errors.ParserError as e:
-        raise TradingDataError(f"Failed to parse CSV: {e}")
+        return pd.read_csv(TEMP_FILE)  # type: ignore
     except Exception as e:
-        raise TradingDataError(f"Failed to load and filter data: {e}")
+        logger.error(f"Failed to load data from {TEMP_FILE}: {e}")
+        raise TradingViewError(f"Failed to load data from file: {e}")
 
 
 @mcp.tool()
-def get_stocks(
-    tech_sig: Literal["buy", "strong_buy", "sell", "strong_sell", "neutral"],
-) -> Union[List[Dict[str, Any]], str]:
+def get_stock_by_category(
+    category: Literal["strong_buy", "buy", "sell", "strong_sell"],
+) -> List[Dict[str, Any]]:
     """
-    Fetch stocks from TradingView scanner based on technical signal recommendation.
-
-    Makes a POST request to TradingView's India scanner API to retrieve stock data,
-    processes the response into a DataFrame, categorizes recommendations, and filters
-    stocks based on the specified technical signal.
+    Get stocks filtered by recommendation category.
 
     Args:
-        tech_sig: The technical signal category to filter by.
-            Must be one of "buy", "strong_buy", "sell", "strong_sell", or "neutral".
+        category: The recommendation category to filter by
 
     Returns:
-        On success, returns a list of dictionaries containing stock data for stocks
-        matching the specified technical signal. On failure, returns an error message string.
+        List of dictionaries containing stock information
+
+    Raises:
+        TradingViewError: If data loading or filtering fails
     """
     try:
-        # Generate output filename with current date
-        output_file = datetime.now().strftime("%Y-%m-%d")
+        df = _load_data()
 
-        # Fetch and process trading data
-        csv_path = fetch_trading_data(output_file)
+        filtered_df = df[df["recommendation_category"] == category]
 
-        # Load and filter stocks
-        stocks = load_and_filter_stocks(csv_path, tech_sig)
-
-        if not stocks:
-            return f"No stocks found with {tech_sig} signal for today"
-
-        return stocks
-
-    except TradingDataError as e:
-        logger.error(f"Trading data error: {e}")
-        return f"Unable to fetch stocks: {e}"
-    except Exception as e:
-        logger.error(f"Unexpected error in get_stocks: {e}")
-        return f"Unable to fetch stocks due to unexpected error: {e}"
-
-
-@mcp.tool()
-def get_recommendation_summary() -> Union[Dict[str, int], str]:
-    """
-    Get a summary of recommendation counts for all categories.
-
-    Returns:
-        Dictionary with recommendation counts or error message.
-    """
-    try:
-        output_file = datetime.now().strftime("%Y-%m-%d")
-        csv_path = fetch_trading_data(output_file)
-
-        df = pd.read_csv(csv_path)  # type: ignore
-        summary = df["recommendation_category"].value_counts().to_dict()  # type: ignore
-
-        return summary
+        return filtered_df[["description", "recommendation_category"]].to_dict(  # type: ignore
+            orient="records"
+        )
 
     except Exception as e:
-        logger.error(f"Error getting recommendation summary: {e}")
-        return f"Unable to get recommendation summary: {e}"
+        logger.error(f"Failed to filter stocks by category {category}: {e}")
+        raise TradingViewError(f"Failed to filter stocks by category: {e}")
 
 
 if __name__ == "__main__":
