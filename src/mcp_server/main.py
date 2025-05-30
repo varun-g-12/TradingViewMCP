@@ -14,6 +14,7 @@ from mcp_server.constants import (
     COLUMNS,
     RECOMMENDATION_THRESHOLDS,
     TEMP_DIR,
+    TECHNICAL_COLUMNS,
 )
 
 # Configure logging
@@ -191,7 +192,7 @@ def _load_data() -> pd.DataFrame:
 
 @mcp.tool()
 def get_stock_by_category(
-    category: Literal["strong_buy", "buy", "sell", "strong_sell"],
+    category: Literal["strong_buy", "buy", "sell", "strong_sell", "neutral"],
 ) -> List[Dict[str, Any]]:
     """
     Get stocks filtered by recommendation category.
@@ -210,13 +211,24 @@ def get_stock_by_category(
 
         filtered_df = df[df["recommendation_category"] == category]
 
-        return filtered_df[["description", "recommendation_category"]].to_dict(  # type: ignore
+        return filtered_df[["name", "recommendation_category"]].to_dict(  # type: ignore
             orient="records"
         )
 
     except Exception as e:
         logger.error(f"Failed to filter stocks by category {category}: {e}")
         raise TradingViewError(f"Failed to filter stocks by category: {e}")
+
+
+@mcp.tool()
+def get_technical_values(tickers: list[str]) -> dict[str, Any]:
+    try:
+        df = _load_data()
+        df_filtered: dict[str, Any] = df[TECHNICAL_COLUMNS + ["name"]].isin(tickers)  # type: ignore
+        return df_filtered.to_dict("records")  # type: ignore
+    except:
+        logging.error(f"Failed to get technical values for {tickers}")
+        raise TradingViewError(f"Failed to get technical values for {tickers}")
 
 
 if __name__ == "__main__":
