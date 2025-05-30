@@ -51,7 +51,7 @@ COPY --from=builder /app/.venv ./.venv
 COPY --from=builder /app/src ./src/
 
 # Create a volume mount point for output
-VOLUME ["/app/tempDir"]
+# VOLUME ["/app/tempDir"]
 
 # Set the command to run the application
 CMD ["python", "-m", "src.mcp_server.main"]
