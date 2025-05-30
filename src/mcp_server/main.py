@@ -1,18 +1,21 @@
-from typing import Any, Dict, List, Literal, Union
-import logging
-import requests
-import pandas as pd
 import datetime
 import json
+import logging
 from pathlib import Path
+from typing import Any, Dict, List, Literal, Union
+
+import pandas as pd
+import requests
 from mcp.server.fastmcp import FastMCP
+
 from mcp_server.constants import (
-    PARAMS,
-    HEADERS,
-    DATA,
     API_URL,
     COLUMNS,
+    DATA,
+    HEADERS,
+    PARAMS,
     RECOMMENDATION_THRESHOLDS,
+    TECHNICAL_COLUMNS,
     TEMP_DIR,
     TECHNICAL_COLUMNS,
 )
@@ -224,7 +227,7 @@ def get_stock_by_category(
 def get_technical_values(tickers: list[str]) -> dict[str, Any]:
     try:
         df = _load_data()
-        df_filtered: dict[str, Any] = df[TECHNICAL_COLUMNS + ["name"]].isin(tickers)  # type: ignore
+        df_filtered = df[df["name"].isin(tickers)][["name"] + TECHNICAL_COLUMNS]
         return df_filtered.to_dict("records")  # type: ignore
     except:
         logging.error(f"Failed to get technical values for {tickers}")
