@@ -22,8 +22,10 @@ WORKDIR /app
 # This allows Docker to cache the dependency installation layer
 COPY pyproject.toml poetry.lock* README.md ./
 
-# Copy the source code
+# Copy the source code and temp dir
 COPY src/ ./src/
+COPY tempDir/ ./tempDir/
+
 # Install project dependencies into a local .venv folder
 # --no-dev: Installs only production dependencies.
 # --no-interaction: Prevents interactive prompts.
@@ -47,6 +49,9 @@ COPY --from=builder /app/.venv ./.venv
 
 # Copy the source code from the builder stage
 COPY --from=builder /app/src ./src/
+
+# Create a volume mount point for output
+VOLUME ["/app/tempDir"]
 
 # Set the command to run the application
 CMD ["python", "-m", "src.mcp_server.main"]
