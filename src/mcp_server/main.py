@@ -10,14 +10,20 @@ from mcp.server.fastmcp import FastMCP
 
 from mcp_server.constants import (
     API_URL,
+    BASIC_INFO_COLUMNS,
+    CANDLESTICK_COLUMNS,
     COLUMNS,
     DATA,
+    FUNDAMENTAL_COLUMNS,
     HEADERS,
     PARAMS,
+    PERFORMANCE_COLUMNS,
+    PRICE_COLUMNS,
+    RECOMMENDATION_COLUMNS,
     RECOMMENDATION_THRESHOLDS,
     TECHNICAL_COLUMNS,
     TEMP_DIR,
-    TECHNICAL_COLUMNS,
+    VOLUME_COLUMNS,
 )
 
 # Configure logging
@@ -224,14 +230,61 @@ def get_stock_by_category(
 
 
 @mcp.tool()
-def get_technical_values(tickers: list[str]) -> dict[str, Any]:
+def get_stock_values(
+    tickers: List[str],
+    columns: List[
+        Literal[
+            "basic_info",
+            "price",
+            "volume",
+            "fundamental",
+            "technical",
+            "performance",
+            "candlestick",
+            "recommendation",
+        ]
+    ],
+) -> List[Dict[str, Any]]:
+    """
+    Get stock values for specified tickers and column categories.
+
+    Args:
+        tickers: List of stock ticker symbols to retrieve
+        columns: List of column categories to include in the results
+
+    Returns:
+        List of dictionaries containing stock information for the specified columns
+
+    Raises:
+        TradingViewError: If data loading or filtering fails
+    """
+    column_mapping = {
+        "basic_info": BASIC_INFO_COLUMNS,
+        "price": PRICE_COLUMNS,
+        "volume": VOLUME_COLUMNS,
+        "fundamental": FUNDAMENTAL_COLUMNS,
+        "technical": TECHNICAL_COLUMNS,
+        "performance": PERFORMANCE_COLUMNS,
+        "candlestick": CANDLESTICK_COLUMNS,
+        "recommendation": RECOMMENDATION_COLUMNS,
+    }
+
+    # Build selected columns list
+    selected_columns = []
+    for column_category in columns:
+        selected_columns.extend(column_mapping[column_category])  # type: ignore
+
     try:
         df = _load_data()
-        df_filtered = df[df["name"].isin(tickers)][["name"] + TECHNICAL_COLUMNS]
-        return df_filtered.to_dict("records")  # type: ignore
-    except:
-        logging.error(f"Failed to get technical values for {tickers}")
-        raise TradingViewError(f"Failed to get technical values for {tickers}")
+
+        # Filter by tickers and select columns
+        filtered_df = df[df["name"].isin(tickers)][["name"] + selected_columns]  # type: ignore
+
+        return filtered_df.to_dict("records")  # type: ignore
+
+    except Exception as e:
+        logger.error(f"Failed to get values for tickers {tickers}: {e}")
+        raise TradingViewError(f"Failed to get values for tickers {tickers}: {e}")
 
 
 if __name__ == "__main__":
